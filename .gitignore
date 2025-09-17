@@ -1,0 +1,11 @@
+# Composer & build
+app/vendor/
+build/
+# Keep composer.lock under version control for reproducibility
+# Terraform local state
+infra/**/.terraform/
+infra/**/terraform.tfstate
+infra/**/terraform.tfstate.backup
+# OS/editor
+.DS_Store
+.idea/
