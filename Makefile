@@ -65,7 +65,7 @@ build: clean deps
 	mkdir -p $(BUILD_DIR)
 	cd $(APP_DIR) && \
 	rm -f $(ZIP_ABS) && \
-	zip -X -9 -qr $(ZIP_ABS) public vendor composer.json composer.lock
+	zip -X -9 -qr $(ZIP_ABS) public src vendor composer.json composer.lock
 	@echo "Built $(ZIP)"
 
 # ---------- Terraform lifecycle ----------
