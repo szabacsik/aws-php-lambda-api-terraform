@@ -1,7 +1,7 @@
 # AWS PHP Lambda API - Terraform Starter
 
 A compact, **learning-first** starter for running a PHP API on **AWS Lambda** behind **API Gateway (HTTP API v2)** using **Terraform**.
-It favors reproducible builds, minimal IAM, structured access logs, and a clean Makefile workflow. Use it as a foundation and extend later.
+It favors reproducible builds, minimal IAM, structured access logs, and a clean Makefile workflow. Use it as a foundation and extend later. It now includes an Amazon Aurora PostgreSQL Serverless v2 database (private subnets, TLS enforced, PDO over VPC, no NAT & no Data API).
 
 ---
 
@@ -62,8 +62,43 @@ make down
 * **Packaging**: Composer + ZIP artifact
 * **Logging**: CloudWatch Logs (Lambda + API Gateway access logs)
 * **Language**: PHP 8.x (CLI for build, FPM at runtime via Bref)
+* **Database**: Amazon Aurora PostgreSQL **Serverless v2** (private subnets, TLS enforced, min 0.5 ACU, **PDO over VPC**, **no NAT**, **no Data API**)
 
 ---
+
+## Database (Aurora PostgreSQL Serverless v2)
+
+**What we use (and why):**
+- **Engine**: Amazon **Aurora PostgreSQL Serverless v2** in **private subnets**, no Internet exposure.
+- **Connectivity**: The Lambda talks to the cluster via **PDO** (TCP) inside the VPC. **No RDS Data API**.
+- **Cost/scaling**: v2 auto-scales between **0.5–4 ACU** (configurable). v2 does **not** scale to zero, but 0.5 ACU is the lowest floor in eu-central-1.
+- **Security**: **TLS required** (`rds.force_ssl=1`), the app connects with `sslmode=require`. DB credentials are in **AWS Secrets Manager**.
+- **No NAT**: The Lambda reaches Secrets Manager via a **VPC Interface Endpoint** (private DNS). No NAT Gateway is created.
+
+**Pros (why this fits the goals):**
+- Minimal ops: fully managed, auto-scaling capacity; credentials in Secrets Manager.
+- Lower idle cost: 0.5 ACU minimum floor; pay more only under load.
+- Private by default: no public ingress to the DB; traffic stays inside the VPC.
+
+**Trade-offs / Cons:**
+- Not scale-to-zero (there is always a 0.5 ACU baseline).
+- Connection storms from Lambda can hurt cold-path latency under spikes (RDS Proxy can help later).
+- Engine version pinned for now (17.4); can be made dynamic per region in a future iteration.
+
+### Where and how to configure
+
+- **Terraform — DB module**: `infra/modules/aurora_dataapi/`
+  - `main.tf` — Aurora cluster + parameter group (`rds.force_ssl=1`), private subnets, SGs.
+  - `variables.tf` — `aurora_engine_version`, `min_acu`, `max_acu`.
+  - `outputs.tf` — `writer_endpoint`, `reader_endpoint`, `secret_arn`, `database_name`, `vpc_id`, `private_subnet_ids`, `db_security_group_id`.
+- **Terraform — API module**: `infra/modules/api/`
+  - Attaches Lambda to VPC; injects env vars: `DB_HOST`, `DB_PORT` (5432), `DB_NAME`, `DB_SECRET_ARN`.
+  - IAM inline policy allows `secretsmanager:GetSecretValue` (account-scoped).
+- **Terraform — per environment**: `infra/<env>/main.tf`
+  - Wires the DB and API modules together; creates the **Secrets Manager VPC endpoint**.
+- **Application code**:
+  - `app/src/Presentation/Http/Action/DefaultAction.php` — sample PDO connection + two queries (`now()` & `SHOW server_version`), TLS via `sslmode=require`.
+  - **PDO_PGSQL** is enabled via `app/php/conf.d/php.ini` and must be included in the ZIP (Makefile does this).
 
 ## Directory Layout
 
@@ -257,6 +292,21 @@ Run `make down` when done to avoid ongoing charges.
 
 ---
 
+## Future improvements (Database)
+
+- **Public access “switch” (rarely needed)**  
+  Default remains **private only**. If one-off SQL client access is required, prefer **SSM Session Manager port-forward** or **Client VPN**. As a last resort, introduce **public subnets + IGW** and a conditional DB subnet group — but this increases blast radius and cost.
+- **Separate application DB user**  
+  Create a least-privileged app user (own Secret) instead of using the master. Reduces risk and aligns with the principle of least privilege.
+- **Engine version management (not hard-coded)**  
+  Discover the latest supported Aurora PG 17.x per region (e.g., data source or script) and set via variables. Avoids drift when new minor versions land.
+- **RDS Proxy**  
+  Smooths out connection storms from Lambda, reduces cold-path latency, and improves throughput under spiky load. Comes with extra cost — enable when needed.
+- **VPC Flow Logs**  
+  Helpful for diagnosing network issues (SGs, subnets, routes). Enable selectively to avoid noise and cost.
+- **AWS RDS HTTP API (Data API)**  
+  Intentionally **not used** here. Could be enabled for non-VPC clients or when eliminating drivers is desirable — but it adds a different auth and runtime model. For this project, **PDO over VPC** is the explicit choice.
+
 ## Troubleshooting
 
 * **`hello_url` not found** → Run `make deploy` first; outputs exist after a successful apply.
@@ -280,3 +330,15 @@ Run `make down` when done to avoid ongoing charges.
 ## License
 
 **Do anything you want with this code. No warranties of any kind.**
+
+# AWS PHP Lambda API with Terraform
+
+This project deploys a PHP API on AWS Lambda behind API Gateway using Terraform.
+
+
+
+
+## Security and networking notes
+
+- **Database security & networking**: see the **Database** section above for TLS, Secrets Manager, and VPC endpoint details.
+- **Logging**: CloudWatch receives both Lambda logs and structured API Gateway access logs for easy tracing.

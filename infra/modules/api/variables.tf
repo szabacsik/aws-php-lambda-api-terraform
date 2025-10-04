@@ -73,9 +73,63 @@ variable "bref_layer_arn" {
   description = "Full ARN of the Bref PHP FPM layer for this region/runtime (see https://bref.sh/docs/runtimes/runtimes-details)"
 }
 
+
 # Enable CORS configuration on the API Gateway HTTP API
 variable "enable_cors" {
   type        = bool
   default     = false
   description = "Enable CORS on the HTTP API. When true, allows GET/POST/OPTIONS from any origin with content-type and authorization headers."
+}
+
+
+
+# Attach Lambda to a VPC to connect to the DB over private subnets (no NAT required)
+variable "enable_vpc" {
+  type        = bool
+  default     = false
+  description = "When true, attach the Lambda function to the provided VPC subnets using a dedicated security group."
+}
+
+variable "vpc_id" {
+  type        = string
+  default     = ""
+  description = "VPC ID where the Lambda security group will be created (required when enable_vpc=true)"
+}
+
+variable "vpc_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "List of private subnet IDs for the Lambda ENIs (required when enable_vpc=true)"
+}
+
+# DB connection details exposed to the Lambda for PDO connections
+variable "db_host" {
+  type        = string
+  default     = ""
+  description = "Database hostname (e.g., Aurora cluster writer endpoint)"
+}
+
+variable "db_port" {
+  type        = number
+  default     = 5432
+  description = "Database port (default 5432 for PostgreSQL)"
+}
+
+variable "db_name" {
+  type        = string
+  default     = ""
+  description = "Logical database name for PDO connections"
+}
+
+# Allow Lambda to read a secret (username/password) from Secrets Manager
+variable "enable_db_secret_access" {
+  type        = bool
+  default     = false
+  description = "When true, attach IAM permissions to read the provided db_secret_arn and expose it as an env var."
+}
+
+variable "db_secret_arn" {
+  type        = string
+  default     = ""
+  description = "Secrets Manager secret ARN containing DB credentials (e.g., the RDS-managed master secret)"
 }

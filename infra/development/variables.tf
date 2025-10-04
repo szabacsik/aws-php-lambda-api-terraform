@@ -31,3 +31,12 @@ variable "bref_layer_arn" {
   default     = "arn:aws:lambda:eu-central-1:534081306603:layer:php-84-fpm:32"
   description = "Full ARN of the Bref PHP FPM layer for this region/runtime"
 }
+
+
+variable "aurora_engine_version" {
+  type        = string
+  default     = "17.4"
+  description = "Aurora PostgreSQL engine version to use (e.g. 17.4 or later supported in region)"
+}
+
+

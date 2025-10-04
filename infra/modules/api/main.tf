@@ -47,6 +47,23 @@ resource "aws_cloudwatch_log_group" "lambda" {
   tags              = var.tags
 }
 
+# Optional Security Group for Lambda when attaching to a VPC
+resource "aws_security_group" "lambda" {
+  count       = var.enable_vpc ? 1 : 0
+  name        = "${local.name_prefix}-lambda-sg"
+  description = "Lambda security group (no inbound; egress open)"
+  vpc_id      = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = var.tags
+}
+
 # Lambda function
 resource "aws_lambda_function" "this" {
   function_name    = local.name_prefix
@@ -62,7 +79,7 @@ resource "aws_lambda_function" "this" {
   # Select the Lambda architecture for the function (x86_64 or arm64)
   architectures = [var.architecture]
 
-  # Fixed Bref layer ARN (see https://bref.sh/docs/runtimes/runtimes-details)
+  # Bref base layer only (pdo_pgsql is enabled via php/conf.d/php.ini; no extra layer)
   layers = [var.bref_layer_arn]
 
   # Ephemeral storage for /tmp
@@ -74,8 +91,26 @@ resource "aws_lambda_function" "this" {
   publish = var.provisioned_concurrency > 0
 
   environment {
-    variables = {
-      APP_ENV = var.app_env
+    variables = merge(
+      {
+        APP_ENV = var.app_env
+      },
+      var.db_host != "" ? {
+        DB_HOST = var.db_host
+        DB_PORT = tostring(var.db_port)
+        DB_NAME = var.db_name
+      } : {},
+      var.enable_db_secret_access && var.db_secret_arn != "" ? {
+        DB_SECRET_ARN = var.db_secret_arn
+      } : {}
+    )
+  }
+
+  dynamic "vpc_config" {
+    for_each = var.enable_vpc ? [1] : []
+    content {
+      subnet_ids         = var.vpc_subnet_ids
+      security_group_ids = [aws_security_group.lambda[0].id]
     }
   }
 
@@ -203,4 +238,36 @@ resource "aws_lambda_provisioned_concurrency_config" "this" {
   function_name                     = aws_lambda_function.this.function_name
   qualifier                         = aws_lambda_function.this.version
   provisioned_concurrent_executions = var.provisioned_concurrency
+}
+
+
+
+# Inline permission for Lambda to read Secrets Manager values (scoped to this account/region)
+resource "aws_iam_role_policy" "db_secret" {
+  name = "${local.name_prefix}-secrets-get"
+  role = aws_iam_role.lambda_exec.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = ["secretsmanager:GetSecretValue"],
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:*"
+      }
+    ]
+  })
+}
+
+
+# Output the Lambda security group ID (when VPC is enabled)
+output "lambda_security_group_id" {
+  value       = try(aws_security_group.lambda[0].id, null)
+  description = "Security group ID attached to the Lambda function (null when not in VPC)"
+}
+
+# VPC ENI permissions for Lambda role (required when Lambda is attached to a VPC)
+resource "aws_iam_role_policy_attachment" "vpc_access" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
