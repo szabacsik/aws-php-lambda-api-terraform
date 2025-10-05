@@ -9,7 +9,9 @@ terraform {
 }
 
 locals {
-  name_prefix = "${var.project_name}-${var.app_env}"
+  name_prefix       = "${var.project_name}-${var.app_env}"
+  # If caller doesn’t pass a name, fall back to a stable, readable default:
+  final_snapshot_id = coalesce(var.final_snapshot_identifier, "${var.project_name}-${var.app_env}-aurora-pg-final")
 }
 
 # Isolated VPC for DB only (no IGW, no NAT)
@@ -121,6 +123,9 @@ resource "aws_rds_cluster" "pg" {
 
   # Deletion protection: keep ON in production, OFF in lower envs (set via caller).
   deletion_protection = var.app_env == "production"
+
+  skip_final_snapshot       = var.create_final_snapshot ? false : true
+  final_snapshot_identifier = var.create_final_snapshot ? local.final_snapshot_id : null
 
   tags = var.tags
 }

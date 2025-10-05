@@ -62,8 +62,10 @@ module "db" {
   min_acu = 0.5
   max_acu = 8
 
-  database_name = "aurora_postgresql_db"
-  tags          = { Project = "aws-php-lambda-api-terraform", Env = "production" }
+  database_name             = "aurora_postgresql_db"
+  create_final_snapshot     = true
+  final_snapshot_identifier = "aws-php-lambda-api-terraform-production-aurora-pg-final"
+  tags                      = { Project = "aws-php-lambda-api-terraform", Env = "production" }
 }
 
 

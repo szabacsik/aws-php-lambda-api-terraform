@@ -60,8 +60,9 @@ module "db" {
   min_acu = 0.5
   max_acu = 2
 
-  database_name = "aurora_postgresql_db"
-  tags          = { Project = "aws-php-lambda-api-terraform", Env = "development" }
+  database_name             = "aurora_postgresql_db"
+  create_final_snapshot     = false
+  tags                      = { Project = "aws-php-lambda-api-terraform", Env = "development" }
 }
 
 # Allow Lambda to connect to the DB on 5432 inside the VPC

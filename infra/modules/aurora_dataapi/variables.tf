@@ -38,3 +38,15 @@ variable "tags" {
   default     = {}
   description = "Resource tags"
 }
+
+variable "create_final_snapshot" {
+  type        = bool
+  default     = false
+  description = "If true, create a final snapshot when destroying the cluster."
+}
+
+variable "final_snapshot_identifier" {
+  type        = string
+  default     = null
+  description = "Final snapshot identifier (required if create_final_snapshot = true). Lowercase letters, numbers, hyphens only."
+}
