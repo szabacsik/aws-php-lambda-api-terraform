@@ -37,3 +37,13 @@ output "reader_endpoint" {
   value       = aws_rds_cluster.pg.reader_endpoint
   description = "Cluster reader endpoint hostname"
 }
+
+output "cluster_identifier" {
+  description = "Aurora cluster identifier"
+  value       = aws_rds_cluster.pg.cluster_identifier
+}
+
+output "instance_identifier" {
+  description = "Aurora primary instance identifier"
+  value       = aws_rds_cluster_instance.writer.id
+}

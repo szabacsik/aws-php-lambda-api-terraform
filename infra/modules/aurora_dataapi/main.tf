@@ -12,6 +12,11 @@ locals {
   name_prefix       = "${var.project_name}-${var.app_env}"
   # If caller doesn’t pass a name, fall back to a stable, readable default:
   final_snapshot_id = coalesce(var.final_snapshot_identifier, "${var.project_name}-${var.app_env}-aurora-pg-final")
+
+  # Ensure project_name and app_env use lowercase letters, digits, and hyphens.
+  base_name           = "${var.project_name}-${var.app_env}"
+  cluster_identifier  = "${var.cluster_name_prefix}-${local.base_name}"
+  instance_identifier = "${var.instance_name_prefix}-${local.base_name}-01"
 }
 
 # Isolated VPC for DB only (no IGW, no NAT)
@@ -97,6 +102,7 @@ resource "aws_rds_cluster_parameter_group" "pg_tls" {
 
 # Aurora PostgreSQL Serverless v2 cluster (Data API optional)
 resource "aws_rds_cluster" "pg" {
+  cluster_identifier = local.cluster_identifier
   engine         = "aurora-postgresql"
   engine_mode    = "provisioned" # Serverless v2 uses 'provisioned' with db.serverless
   engine_version = var.engine_version
@@ -132,6 +138,7 @@ resource "aws_rds_cluster" "pg" {
 
 # One Serverless v2 writer instance
 resource "aws_rds_cluster_instance" "writer" {
+  identifier         = local.instance_identifier
   cluster_identifier = aws_rds_cluster.pg.id
   engine             = aws_rds_cluster.pg.engine
   engine_version     = aws_rds_cluster.pg.engine_version

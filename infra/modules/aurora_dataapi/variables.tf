@@ -1,5 +1,17 @@
-variable "project_name" { type = string }
-variable "app_env"      { type = string }
+# IMPORTANT: For all name-related variables in this project, prefer simple, safe characters.
+# Recommended for RDS identifiers: lowercase letters a–z, digits 0–9, and hyphens (-).
+# Keep the overall rendered identifier <= 63 chars (RDS limit).
+
+variable "project_name" {
+  type        = string
+  description = "Project short name. Use lowercase letters, digits, and hyphens only."
+}
+
+variable "app_env" {
+  type        = string
+  description = "Environment name (e.g., development, staging, production). Use lowercase letters, digits, and hyphens only."
+}
+
 variable "aws_region"   { type = string }
 
 # Database logical name (schema/db name)
@@ -49,4 +61,30 @@ variable "final_snapshot_identifier" {
   type        = string
   default     = null
   description = "Final snapshot identifier (required if create_final_snapshot = true). Lowercase letters, numbers, hyphens only."
+}
+
+# Human-friendly naming prefixes (overridable if ever needed)
+variable "cluster_name_prefix" {
+  description = "Prefix for Aurora cluster identifiers"
+  type        = string
+  default     = "aurora-pg-cluster"
+}
+
+variable "instance_name_prefix" {
+  description = "Prefix for Aurora instance identifiers"
+  type        = string
+  default     = "aurora-pg-instance"
+}
+
+# Optional hard overrides (useful to avoid replacement in prod while migrating names)
+variable "db_cluster_identifier_override" {
+  description = "Explicit cluster identifier; if set, overrides the generated one"
+  type        = string
+  default     = null
+}
+
+variable "db_instance_identifier_override" {
+  description = "Explicit instance identifier for the first instance; if set, overrides the generated one"
+  type        = string
+  default     = null
 }
