@@ -133,3 +133,10 @@ variable "db_secret_arn" {
   default     = ""
   description = "Secrets Manager secret ARN containing DB credentials (e.g., the RDS-managed master secret)"
 }
+
+# Additional environment variables to inject into the Lambda function
+variable "env_vars" {
+  type        = map(string)
+  default     = {}
+  description = "Additional environment variables passed to the Lambda function (string values only)."
+}

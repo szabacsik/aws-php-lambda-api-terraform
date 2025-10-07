@@ -93,7 +93,8 @@ resource "aws_lambda_function" "this" {
   environment {
     variables = merge(
       {
-        APP_ENV = var.app_env
+        APP_ENV = var.app_env,
+        AWS_REGION = var.aws_region,
       },
       var.db_host != "" ? {
         DB_HOST = var.db_host
@@ -102,7 +103,8 @@ resource "aws_lambda_function" "this" {
       } : {},
       var.enable_db_secret_access && var.db_secret_arn != "" ? {
         DB_SECRET_ARN = var.db_secret_arn
-      } : {}
+      } : {},
+      var.env_vars
     )
   }
 

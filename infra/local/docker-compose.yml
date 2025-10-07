@@ -21,18 +21,18 @@ services:
     environment:
       HANDLER: public/index.php
       DOCUMENT_ROOT: public
-
+      APP_TZ: Europe/Budapest
+      AWS_SM_HTTP_CONNECT_TIMEOUT: 10
+      AWS_SM_HTTP_TIMEOUT: 10
+      LOG_LEVEL: debug
       APP_ENV: local
       AWS_REGION: eu-central-1
-
       # Route AWS SDK to LocalStack Secrets Manager
       AWS_SM_ENDPOINT: http://php-lambda-api-localstack:4566
-
       # Provide dummy AWS credentials for LocalStack and disable IMDS
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_EC2_METADATA_DISABLED: "true"
-
       # Database connection
       DB_HOST: php-lambda-api-db
       DB_PORT: "5432"
@@ -40,7 +40,6 @@ services:
       DB_SECRET_ARN: local/db/master
       # Local DB is non‑TLS for simplicity; keep sslmode=require in prod
       DB_SSLMODE: disable
-
     volumes:
       # Mount project code read-only, Lambda-like
       - ../../app:/var/task:ro

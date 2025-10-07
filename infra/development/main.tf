@@ -30,6 +30,14 @@ module "api" {
   enable_db_secret_access   = true
   db_secret_arn             = module.db.secret_arn
 
+  env_vars = {
+    APP_TZ                      = "Europe/Budapest"
+    LOG_LEVEL                   = "debug"
+    AWS_SM_HTTP_CONNECT_TIMEOUT = "2"
+    AWS_SM_HTTP_TIMEOUT         = "2"
+    DB_SSLMODE                  = "require"
+  }
+
   tags = {
     Project = "aws-php-lambda-api-terraform"
     Env     = "development"

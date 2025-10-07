@@ -22,51 +22,27 @@ final readonly class DefaultAction
     {
         $this->logger->info('DefaultAction invoked');
 
-        $region    = getenv('AWS_REGION') ?: 'eu-central-1';
-        $dbHost    = getenv('DB_HOST') ?: '';
-        $dbPort    = (int) (getenv('DB_PORT') ?: 5432);
-        $dbName    = getenv('DB_NAME') ?: '';
-        $secretArn = getenv('DB_SECRET_ARN') ?: '';
-
+        // Resolve client IP from headers/server params
         $xff      = $request->getHeaderLine('X-Forwarded-For');
         $clientIp = $xff !== '' ? trim(explode(',', $xff)[0]) : ($request->getServerParams()['REMOTE_ADDR'] ?? null);
 
+        $region = (string)$this->config->get('aws.region');
+        $env    = (string)$this->config->get('app.env');
+
         $meta = [
             'time'   => (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\\TH:i:s.vP'),
-            'region' => (string) ($this->config->get('aws.region') ?? $region),
-            'env'    => (string) ($this->config->get('app.env') ?? ''),
+            'region' => $region,
+            'env'    => $env,
             'ip'     => $clientIp,
             'path'   => $request->getUri()->getPath(),
         ];
 
-        if ($dbHost === '' || $dbName === '' || $secretArn === '') {
-            return [
-                'ok'    => false,
-                'error' => 'Missing DB env vars (DB_HOST/DB_NAME/DB_SECRET_ARN).',
-                'meta'  => $meta,
-            ];
-        }
-
         try {
-            // 1) Secrets Manager
-            $secretsManagerEndpoint = getenv('AWS_SM_ENDPOINT') ?: null;
-            $secretsManagerConfig = [
-                'version' => '2017-10-17',
-                'region'  => $region,
-                'http'    => [
-                    'connect_timeout' => 1.0,
-                    'timeout'         => 3.0,
-                ],
-            ];
-            if ($secretsManagerEndpoint) {
-                // Route to LocalStack in local dev and use static dummy credentials
-                $secretsManagerConfig['endpoint'] = $secretsManagerEndpoint;
-                $secretsManagerConfig['credentials'] = [
-                    'key'    => getenv('AWS_ACCESS_KEY_ID') ?: 'test',
-                    'secret' => getenv('AWS_SECRET_ACCESS_KEY') ?: 'test',
-                ];
-            }
-            $secretsManagerClient  = new SecretsManagerClient($secretsManagerConfig);
+            // 1) Secrets Manager - all configuration prepared by Configuration
+            $secretArn = (string)$this->config->get('db.credentials.secretArn');
+            $smClientConfig = (array)$this->config->get('aws.secretsManager.clientConfig');
+
+            $secretsManagerClient = new SecretsManagerClient($smClientConfig);
             $result = $secretsManagerClient->getSecretValue(['SecretId' => $secretArn]);
 
             $secretString = $result['SecretString'] ?? null;
@@ -82,15 +58,8 @@ final readonly class DefaultAction
                 return ['ok' => false, 'error' => 'Secret is missing "username" or "password".', 'meta' => $meta];
             }
 
-            // 2) PDO + TLS + sane timeouts/metadata
-            $dbSSLMode = getenv('DB_SSLMODE') ?: 'require'; // disable
-            $dsn = sprintf(
-                "pgsql:host=%s;port=%d;dbname=%s;sslmode=%s;connect_timeout=5;application_name=aws-php-lambda",
-                $dbHost,
-                $dbPort,
-                $dbName,
-                $dbSSLMode,
-            );
+            // 2) PDO - DSN assembled by Configuration
+            $dsn = (string)$this->config->get('db.dsn');
 
             $pdo = new \PDO($dsn, $user, $pass, [
                 \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
@@ -117,7 +86,7 @@ final readonly class DefaultAction
             return ['ok' => false, 'error' => 'DB connection/query failed', 'meta' => $meta];
         } catch (\Throwable $e) {
             $this->logger->error('Unhandled error', ['msg' => $e->getMessage()]);
-            return ['ok' => false, 'error' => 'Unhandled error', 'meta' => $meta, 'e' => (string)$e, 'arn' => $secretArn];
+            return ['ok' => false, 'error' => 'Unhandled error', 'meta' => $meta, 'e' => (string)$e];
         }
     }
 }
