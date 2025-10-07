@@ -49,12 +49,29 @@ final readonly class DefaultAction
 
         try {
             // 1) Secrets Manager
-            $sm = new SecretsManagerClient(['version' => '2017-10-17', 'region' => $region]);
-            $res = $sm->getSecretValue(['SecretId' => $secretArn]);
+            $secretsManagerEndpoint = getenv('AWS_SM_ENDPOINT') ?: null;
+            $secretsManagerConfig = [
+                'version' => '2017-10-17',
+                'region'  => $region,
+                'http'    => [
+                    'connect_timeout' => 1.0,
+                    'timeout'         => 3.0,
+                ],
+            ];
+            if ($secretsManagerEndpoint) {
+                // Route to LocalStack in local dev and use static dummy credentials
+                $secretsManagerConfig['endpoint'] = $secretsManagerEndpoint;
+                $secretsManagerConfig['credentials'] = [
+                    'key'    => getenv('AWS_ACCESS_KEY_ID') ?: 'test',
+                    'secret' => getenv('AWS_SECRET_ACCESS_KEY') ?: 'test',
+                ];
+            }
+            $secretsManagerClient  = new SecretsManagerClient($secretsManagerConfig);
+            $result = $secretsManagerClient->getSecretValue(['SecretId' => $secretArn]);
 
-            $secretString = $res['SecretString'] ?? null;
-            if ($secretString === null && isset($res['SecretBinary'])) {
-                $secretString = base64_decode($res['SecretBinary']);
+            $secretString = $result['SecretString'] ?? null;
+            if ($secretString === null && isset($result['SecretBinary'])) {
+                $secretString = base64_decode($result['SecretBinary']);
             }
             $payload = json_decode($secretString ?? '{}', true, 512, JSON_THROW_ON_ERROR);
 
@@ -66,11 +83,13 @@ final readonly class DefaultAction
             }
 
             // 2) PDO + TLS + sane timeouts/metadata
+            $dbSSLMode = getenv('DB_SSLMODE') ?: 'require'; // disable
             $dsn = sprintf(
-                "pgsql:host=%s;port=%d;dbname=%s;sslmode=require;connect_timeout=5;application_name=aws-php-lambda",
+                "pgsql:host=%s;port=%d;dbname=%s;sslmode=%s;connect_timeout=5;application_name=aws-php-lambda",
                 $dbHost,
                 $dbPort,
-                $dbName
+                $dbName,
+                $dbSSLMode,
             );
 
             $pdo = new \PDO($dsn, $user, $pass, [
@@ -98,7 +117,7 @@ final readonly class DefaultAction
             return ['ok' => false, 'error' => 'DB connection/query failed', 'meta' => $meta];
         } catch (\Throwable $e) {
             $this->logger->error('Unhandled error', ['msg' => $e->getMessage()]);
-            return ['ok' => false, 'error' => 'Unhandled error', 'meta' => $meta];
+            return ['ok' => false, 'error' => 'Unhandled error', 'meta' => $meta, 'e' => (string)$e, 'arn' => $secretArn];
         }
     }
 }

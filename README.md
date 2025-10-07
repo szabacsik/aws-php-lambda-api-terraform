@@ -141,6 +141,78 @@ Makefile             # Build & deploy workflow
 
 ---
 
+## Local development (infra/local)
+
+A minimal, prod-like local stack to work fast without AWS:
+- HTTP: Bref dev web server (image: bref/php-84-fpm-dev:2.3.34) on http://localhost:8000
+- DB: PostgreSQL 17.4 (official image)
+- AWS emulation: LocalStack (Secrets Manager only)
+- Code mount: your ./app is mounted read-only into /var/task (Lambda-like layout)
+
+Why it matches production closely:
+- Same PHP runtime lineage (Bref FPM) and filesystem shape (/var/task)
+- Same Secrets Manager flow (the app uses AWS_SM_ENDPOINT to talk to LocalStack)
+- DB version parity: PostgreSQL 17.4; database name: aurora_postgresql_db
+
+Quick start
+```bash
+cd infra/local
+make up
+make ping     # http://localhost:8000/hello
+make app-logs # or: make logs / make php-logs
+```
+
+Available Make targets (local only)
+- up, down, restart
+- logs, app-logs (alias: php-logs)
+- ping (GET /hello), curl (GET /)
+- db-cli (psql into the container)
+- secret-get (dump the LocalStack secret)
+
+Services (docker-compose.yml)
+- api: bref/php-84-fpm-dev:2.3.34
+  - Exposes 8000
+  - Env for AWS SDK → LocalStack: AWS_SM_ENDPOINT=http://php-lambda-api-localstack:4566
+  - DB env: DB_HOST=php-lambda-api-db, DB_PORT=5432, DB_NAME=aurora_postgresql_db, DB_SECRET_ARN=local/db/master
+  - TLS locally: DB_SSLMODE=disable (keep require in prod)
+- db: postgres:17.4 (user: app_user, pass: app_pass, db: aurora_postgresql_db)
+- localstack: localstack/localstack:stable (service enabled: secretsmanager)
+  - Init script: infra/local/localstack/create-secret.sh → creates secret local/db/master
+
+Xdebug (enabled)
+- The dev image ships with Xdebug enabled. Extra tweaks live in app/php/conf.d/xdebug.ini
+  - mode=debug, start_with_request=yes, discover_client_host=1, port=9003
+- IDE tips:
+  - Listen on 9003
+  - Map project root → /var/task
+  - If connections don’t arrive on Linux, set xdebug.client_host=host.docker.internal in app/php/conf.d/xdebug.ini and restart containers
+
+Local workflow
+1) Start the stack: make up
+2) Edit code under ./app — changes are hot‑reloaded (no rebuild needed)
+3) Hit http://localhost:8000 (make ping / make curl)
+4) Watch logs: make app-logs
+5) Inspect DB: make db-cli; Inspect secret: make secret-get
+
+Troubleshooting (local)
+- LocalStack init script “Permission denied”
+  - chmod +x infra/local/localstack/create-secret.sh
+  - make restart
+- Check LocalStack health
+  - curl -s http://localhost:4566/_localstack/health | jq .
+  - Expect secretsmanager to be "running" and version shown
+- Secret not found / AWS errors
+  - Ensure AWS_SM_ENDPOINT points to LocalStack (compose sets it)
+  - make secret-get should print the JSON with username/password
+- DB SSL / connection errors
+  - Locally sslmode=disable is used; ensure the db container is healthy (docker compose ps)
+- Xdebug not hitting IDE
+  - Verify port 9003, path mapping to /var/task, and optionally set client_host as above
+
+Note: These local Make targets are intentionally not part of the root Makefile to keep concerns separate.
+
+---
+
 ## Configuration & Environments
 
 ### Switching environments

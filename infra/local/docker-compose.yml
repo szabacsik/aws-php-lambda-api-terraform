@@ -1,0 +1,94 @@
+name: php-lambda-api
+
+networks:
+  php-lambda-api-net:
+    name: php-lambda-api-net
+
+volumes:
+  php-lambda-api-pgdata:
+    name: php-lambda-api-pgdata
+  php-lambda-api-localstack-data:
+    name: php-lambda-api-localstack-data
+
+services:
+  api:
+    # https://bref.sh/docs/local-development
+    # https://hub.docker.com/u/bref
+    image: bref/php-84-fpm-dev:2.3.34
+    container_name: php-lambda-api-app
+    hostname: php-lambda-api-app
+    ports: ["8000:8000"]
+    environment:
+      HANDLER: public/index.php
+      DOCUMENT_ROOT: public
+
+      APP_ENV: local
+      AWS_REGION: eu-central-1
+
+      # Route AWS SDK to LocalStack Secrets Manager
+      AWS_SM_ENDPOINT: http://php-lambda-api-localstack:4566
+
+      # Provide dummy AWS credentials for LocalStack and disable IMDS
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_EC2_METADATA_DISABLED: "true"
+
+      # Database connection
+      DB_HOST: php-lambda-api-db
+      DB_PORT: "5432"
+      DB_NAME: aurora_postgresql_db
+      DB_SECRET_ARN: local/db/master
+      # Local DB is non‑TLS for simplicity; keep sslmode=require in prod
+      DB_SSLMODE: disable
+
+    volumes:
+      # Mount project code read-only, Lambda-like
+      - ../../app:/var/task:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    networks: [php-lambda-api-net]
+
+  db:
+    image: postgres:17.4
+    container_name: php-lambda-api-db
+    hostname: php-lambda-api-db
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_pass
+      POSTGRES_DB: aurora_postgresql_db
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - php-lambda-api-pgdata:/var/lib/postgresql/data
+    networks: [php-lambda-api-net]
+
+  localstack:
+    image: localstack/localstack:stable
+    container_name: php-lambda-api-localstack
+    hostname: php-lambda-api-localstack
+    environment:
+      SERVICES: secretsmanager
+      DEBUG: "0"
+      AWS_DEFAULT_REGION: eu-central-1
+      DOCKER_HOST: unix:///var/run/docker.sock
+    ports:
+      - "4566:4566"
+    volumes:
+      - php-lambda-api-localstack-data:/var/lib/localstack
+      - ./localstack:/etc/localstack/init/ready.d
+    healthcheck:
+      # Use LocalStack's HTTP health endpoint instead of awslocal
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health | grep -q '\"secretsmanager\"'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks: [php-lambda-api-net]
