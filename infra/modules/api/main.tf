@@ -90,11 +90,15 @@ resource "aws_lambda_function" "this" {
   # Publish a new version only when provisioned concurrency is enabled
   publish = var.provisioned_concurrency > 0
 
+  # IMPORTANT: Do not pass reserved AWS Lambda environment variables (e.g., AWS_REGION, AWS_EXECUTION_ENV,
+  # AWS_LAMBDA_FUNCTION_NAME). Lambda injects these automatically and they cannot be overridden.
+  # Attempting to set them will cause InvalidParameterValueException during CreateFunction/UpdateFunctionConfiguration.
+  # https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html
+
   environment {
     variables = merge(
       {
         APP_ENV = var.app_env,
-        AWS_REGION = var.aws_region,
       },
       var.db_host != "" ? {
         DB_HOST = var.db_host
