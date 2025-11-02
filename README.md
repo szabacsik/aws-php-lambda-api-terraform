@@ -11,6 +11,12 @@ It favors reproducible builds, minimal IAM, structured access logs, and a clean 
 # Choose target environment (default: development)
 export ENV=development
 export AWS_REGION=eu-central-1
+# Optional: store Terraform state in a separate slug/region when forking
+# export TF_STATE_PROJECT=my-php-api
+# export TF_STATE_REGION=eu-west-1
+
+# One-time: create the remote Terraform state bucket + DynamoDB lock table
+make bootstrap-remote-state
 
 # Build PHP artifact (composer install + deterministic ZIP)
 make build
@@ -316,6 +322,8 @@ Quality tools (optional):
 - validate — Composer validate, PHP lint, Terraform fmt -check & validate (requires init)
 - composer-audit — Composer security audit against composer.lock
 - fmt — Terraform fmt recursively under infra/
+- tflint — Terraform linting (requires tflint)
+- tfsec — Terraform security scanning (requires tfsec)
 
 ---
 
@@ -330,22 +338,76 @@ Quality tools (optional):
 ## Reproducibility & State
 
 * **Composer**: `composer.lock` is versioned → repeatable PHP builds.
-* **Terraform**: commit `.terraform.lock.hcl` per environment for provider pinning.
-* **Remote state (recommended for teams)**: switch to S3 + DynamoDB lock (example):
+* **Terraform providers**: commit `.terraform.lock.hcl` per environment for provider pinning.
+* **Remote state**: Terraform state lives in S3 with DynamoDB-backed locking for every environment.
 
-```hcl
-terraform {
-  backend "s3" {
-    bucket         = "my-tfstate-bucket"
-    key            = "aws-php-lambda-api-terraform/development/terraform.tfstate"
-    region         = "eu-central-1"
-    dynamodb_table = "my-tf-locks"
-    encrypt        = true
-  }
+### Remote Terraform State (S3 + DynamoDB)
+
+Set `TF_STATE_PROJECT` to your fork's slug (default: `aws-php-lambda-api-terraform`). The Makefile derives the bucket name, DynamoDB table, and state keys from that value, so renaming keeps everything in sync.
+
+1. **Bootstrap once per AWS account/region**  
+   Run `make bootstrap-remote-state` (override `TF_STATE_REGION` when it differs from `AWS_REGION`). The target checks that the AWS CLI is installed and authenticated, then creates `<slug>-tf-state-<account>-<region>` with SSE-S3 encryption, TLS-only bucket policy, bucket-owner-enforced ACLs, versioning, and a lifecycle rule that retires non-current versions after 90 days. It also provisions `<slug>-tf-locks` in DynamoDB with on-demand billing, point-in-time recovery, and shared tags. Re-running the target is idempotent; adjust tags via `TF_STATE_TAG_*`.
+2. **Backend configuration per environment**  
+   The Makefile injects `bucket`, `region`, `key=<slug>/<env>/terraform.tfstate`, `dynamodb_table=<slug>-tf-locks`, and `encrypt=true` during `make tf-init`. The `infra/<env>/backend.hcl` files remain optional stubs—extend them only if you need extra backend parameters.
+3. **Initialize Terraform with the remote backend**  
+   Use `make tf-init` (or `ENV=staging make tf-init`) after bootstrap. No manual edits to the Terraform code are required; the backend binds automatically based on the current environment and slug.
+4. **Apply normally**  
+   Run `make deploy`, `make update`, or ad-hoc Terraform commands as before—state now lives in S3 and locking is handled by DynamoDB, preventing concurrent applies.
+5. **Smoke-test locking & versioning**  
+   Open two terminals, run `ENV=development make tf-plan` in one, and trigger a second plan/apply in the other. The second command should block with a lock message. After the first command completes, list S3 object versions for your prefix (for example: `aws s3api list-object-versions --bucket <slug>-tf-state-<account>-<region> --prefix <slug>/<env>/`)—a fresh `VersionId` confirms versioning is active.
+
+State migration tips:
+- If `TF_STATE_PROJECT` or `TF_STATE_REGION` changes, run `RECONFIGURE=1 make tf-init` so Terraform re-reads the backend settings.
+- When relocating existing state data (bucket or key changes), run `MIGRATE=1 make tf-init` to move the stored state to the new location.
+
+Operational helpers:
+- `make state-info` prints the derived bucket, table, and key for the current `ENV`, slug, and AWS account.
+- `make tf-force-unlock ID=<lock-id>` releases a stuck DynamoDB lock (only after confirming no other apply is running).
+- Terraform CLI invocations default to `-input=false` and wait up to `LOCK_TIMEOUT` (default: `5m`) to acquire the state lock.
+- Applies/destroys run with `-auto-approve` unless `ENV=production`; override with `AUTO_APPROVE=1 make tf-apply` when automation is intentional.
+
+Minimal IAM for Terraform state access (substitute your bucket ARN, account ID, and region):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3StateAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:GetObjectVersion",
+        "s3:DeleteObjectVersion",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aws-php-lambda-api-terraform-tf-state-123456789012-eu-central-1",
+        "arn:aws:s3:::aws-php-lambda-api-terraform-tf-state-123456789012-eu-central-1/*"
+      ]
+    },
+    {
+      "Sid": "DynamoStateLocking",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": "arn:aws:dynamodb:eu-central-1:123456789012:table/aws-php-lambda-api-terraform-tf-locks"
+    }
+  ]
 }
 ```
 
-For learning, local state is OK—avoid concurrent applies from multiple machines.
+> Bootstrap requires additional permissions (`s3:CreateBucket`, `s3:PutBucket*`, `s3:PutEncryptionConfiguration`, `dynamodb:CreateTable`, etc.). Run it with elevated credentials once, then grant Terraform the narrower policy above for day-to-day work.
+> Update the bucket/table ARNs to match the resources generated from your `TF_STATE_PROJECT` slug and AWS account.
 
 ---
 
