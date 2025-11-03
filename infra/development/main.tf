@@ -1,7 +1,19 @@
+locals {
+  project_name = "aws-php-lambda-api-terraform"
+  environment  = "development"
+  owner        = "John Doe"
+  common_tags = {
+    Project     = local.project_name
+    Environment = local.environment
+    ManagedBy   = "Terraform"
+    Owner       = local.owner
+  }
+}
+
 module "api" {
   source          = "../modules/api"
-  project_name    = "aws-php-lambda-api-terraform"
-  app_env         = "development"
+  project_name    = local.project_name
+  app_env         = local.environment
   aws_region      = var.aws_region
   lambda_zip_path = var.lambda_zip_path
 
@@ -38,10 +50,8 @@ module "api" {
     DB_SSLMODE                  = "require"
   }
 
-  tags = {
-    Project = "aws-php-lambda-api-terraform"
-    Env     = "development"
-  }
+  ssm_parameter_arns = [module.example_parameter.parameter_arn]
+  tags               = local.common_tags
 }
 
 output "api_base_url" {
@@ -58,8 +68,8 @@ output "lambda_function_name" {
 
 module "db" {
   source       = "../modules/aurora_dataapi"
-  project_name = "aws-php-lambda-api-terraform"
-  app_env      = "development"
+  project_name = local.project_name
+  app_env      = local.environment
   aws_region   = var.aws_region
 
   engine_version = var.aurora_engine_version
@@ -70,7 +80,18 @@ module "db" {
 
   database_name             = "aurora_postgresql_db"
   create_final_snapshot     = false
-  tags                      = { Project = "aws-php-lambda-api-terraform", Env = "development" }
+  tags                  = local.common_tags
+}
+
+# Provide a baseline SSM Parameter Store entry for cross-environment testing.
+module "example_parameter" {
+  source       = "../modules/ssm_parameter"
+  project_name = local.project_name
+  app_env      = local.environment
+  name         = "EXAMPLE_PARAMETER"
+  value        = "Lorem Ipsum Dolor Sit Amet"
+  description  = "Example parameter provisioned by Terraform."
+  owner        = local.owner
 }
 
 # Allow Lambda to connect to the DB on 5432 inside the VPC
@@ -110,10 +131,7 @@ resource "aws_security_group" "vpc_endpoints" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Project = "aws-php-lambda-api-terraform"
-    Env     = "development"
-  }
+  tags = local.common_tags
 }
 
 # Secrets Manager Interface VPC Endpoint (private DNS enabled)
@@ -124,5 +142,16 @@ resource "aws_vpc_endpoint" "secretsmanager" {
   subnet_ids          = module.db.private_subnet_ids
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  tags                = { Name = "aws-php-lambda-api-terraform-development-vpce-secretsmanager" }
+  tags                = merge(local.common_tags, { Name = "${local.project_name}-${local.environment}-vpce-secretsmanager" })
+}
+
+# Systems Manager Parameter Store Interface VPC Endpoint (private DNS enabled)
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id              = module.db.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.db.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+  tags                = merge(local.common_tags, { Name = "${local.project_name}-${local.environment}-vpce-ssm" })
 }

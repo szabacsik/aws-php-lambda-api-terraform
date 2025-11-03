@@ -265,6 +265,26 @@ resource "aws_iam_role_policy" "db_secret" {
   })
 }
 
+resource "aws_iam_role_policy" "ssm_read" {
+  count = length(var.ssm_parameter_arns) > 0 ? 1 : 0
+  name  = "${local.name_prefix}-ssm-get"
+  role  = aws_iam_role.lambda_exec.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ],
+        Resource = var.ssm_parameter_arns
+      }
+    ]
+  })
+}
+
 
 # Output the Lambda security group ID (when VPC is enabled)
 output "lambda_security_group_id" {

@@ -140,3 +140,9 @@ variable "env_vars" {
   default     = {}
   description = "Additional environment variables passed to the Lambda function (string values only)."
 }
+
+variable "ssm_parameter_arns" {
+  type        = list(string)
+  default     = []
+  description = "List of SSM Parameter Store ARNs the Lambda function may read."
+}
