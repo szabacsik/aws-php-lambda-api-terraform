@@ -21,6 +21,18 @@ variable "database_name" {
   description = "Logical database name to create with the cluster"
 }
 
+variable "master_username" {
+  type        = string
+  default     = "postgres"
+  description = "Master username for the Aurora cluster."
+}
+
+variable "master_password" {
+  type        = string
+  sensitive   = true
+  description = "Master password for the Aurora cluster."
+}
+
 # Aurora PostgreSQL engine version. Prefer PG 17.x (latest in region).
 # Tip: resolve exact version at deploy time; see README notes.
 variable "engine_version" {

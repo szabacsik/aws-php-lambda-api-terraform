@@ -4,13 +4,6 @@ output "database_name" {
   description = "Logical database name"
 }
 
-# When manage_master_user_password = true, AWS creates a managed secret.
-# Access pattern in recent providers: master_user_secret is a list with one item.
-output "secret_arn" {
-  description = "Secrets Manager ARN for the master user (managed by RDS)"
-  value       = try(aws_rds_cluster.pg.master_user_secret[0].secret_arn, null)
-}
-
 # Network outputs for attaching Lambda into the VPC
 output "vpc_id" {
   value       = aws_vpc.db.id

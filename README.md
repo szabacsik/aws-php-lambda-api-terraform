@@ -78,11 +78,11 @@ make down
 - **Engine**: Amazon **Aurora PostgreSQL Serverless v2** in **private subnets**, no Internet exposure.
 - **Connectivity**: The Lambda talks to the cluster via **PDO** (TCP) inside the VPC. **No RDS Data API**.
 - **Cost/scaling**: v2 auto-scales between **0.5–4 ACU** (configurable). v2 does **not** scale to zero, but 0.5 ACU is the lowest floor in eu-central-1.
-- **Security**: **TLS required** (`rds.force_ssl=1`), the app connects with `sslmode=require`. DB credentials are in **AWS Secrets Manager**.
-- **No NAT**: The Lambda reaches Secrets Manager via a **VPC Interface Endpoint** (private DNS). No NAT Gateway is created.
+- **Security**: **TLS required** (`rds.force_ssl=1`), the app connects with `sslmode=require`. DB credentials arrive via Lambda environment variables provisioned by Terraform.
+- **No NAT**: The Lambda runs in private subnets and reaches Aurora directly; no NAT Gateway or interface endpoints are required.
 
 **Pros (why this fits the goals):**
-- Minimal ops: fully managed, auto-scaling capacity; credentials in Secrets Manager.
+- Minimal ops: fully managed, auto-scaling capacity; credentials wired via Terraform-provisioned environment variables.
 - Lower idle cost: 0.5 ACU minimum floor; pay more only under load.
 - Private by default: no public ingress to the DB; traffic stays inside the VPC.
 
@@ -95,13 +95,13 @@ make down
 
 - **Terraform — DB module**: `infra/modules/aurora_dataapi/`
   - `main.tf` — Aurora cluster + parameter group (`rds.force_ssl=1`), private subnets, SGs.
-  - `variables.tf` — `aurora_engine_version`, `min_acu`, `max_acu`.
-  - `outputs.tf` — `writer_endpoint`, `reader_endpoint`, `secret_arn`, `database_name`, `vpc_id`, `private_subnet_ids`, `db_security_group_id`.
+  - `variables.tf` — `aurora_engine_version`, `min_acu`, `max_acu`, and the master credentials (`master_username`, `master_password`).
+  - `outputs.tf` — `writer_endpoint`, `reader_endpoint`, `database_name`, `vpc_id`, `private_subnet_ids`, `db_security_group_id`.
 - **Terraform — API module**: `infra/modules/api/`
-  - Attaches Lambda to VPC; injects env vars: `DB_HOST`, `DB_PORT` (5432), `DB_NAME`, `DB_SECRET_ARN`.
-  - IAM inline policy allows `secretsmanager:GetSecretValue` (account-scoped).
+  - Attaches Lambda to VPC; injects env vars such as `DB_HOST`, `DB_PORT` (5432), `DB_NAME`, and any additional key/value pairs supplied via `env_vars` (e.g., `DB_USER`, `DB_PASSWORD`, `LOG_LEVEL`).
 - **Terraform — per environment**: `infra/<env>/main.tf`
-  - Wires the DB and API modules together; creates the **Secrets Manager VPC endpoint**.
+  - Wires the DB and API modules together and supplies environment-specific values (including `db_username` / `db_password` via local `terraform.tfvars` files that are not committed).
+  - Each environment folder includes a `terraform.tfvars.example`; copy it to `terraform.tfvars` and fill in real credentials before running Terraform.
 - **Application code**:
   - `app/src/Presentation/Http/Action/DefaultAction.php` — sample PDO connection + two queries (`now()` & `SHOW server_version`), TLS via `sslmode=require`.
   - **PDO_PGSQL** is enabled via `app/php/conf.d/php.ini` and must be included in the ZIP (Makefile does this).
@@ -152,12 +152,12 @@ Makefile             # Build & deploy workflow
 A minimal, prod-like local stack to work fast without AWS:
 - HTTP: Bref dev web server (image: bref/php-84-fpm-dev:2.3.34) on http://localhost:8000
 - DB: PostgreSQL 17.4 (official image)
-- AWS emulation: LocalStack (Secrets Manager only)
+- Configuration: environment variables mirror the Lambda deployment (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSLMODE`)
 - Code mount: your ./app is mounted read-only into /var/task (Lambda-like layout)
 
 Why it matches production closely:
 - Same PHP runtime lineage (Bref FPM) and filesystem shape (/var/task)
-- Same Secrets Manager flow (the app uses AWS_SM_ENDPOINT to talk to LocalStack)
+- Same env-var contract as Lambda (no Secrets Manager dependency)
 - DB version parity: PostgreSQL 17.4; database name: aurora_postgresql_db
 
 Quick start
@@ -173,17 +173,13 @@ Available Make targets (local only)
 - logs, app-logs (alias: php-logs)
 - ping (GET /hello), curl (GET /)
 - db-cli (psql into the container)
-- secret-get (dump the LocalStack secret)
 
 Services (docker-compose.yml)
 - api: bref/php-84-fpm-dev:2.3.34
   - Exposes 8000
-  - Env for AWS SDK → LocalStack: AWS_SM_ENDPOINT=http://php-lambda-api-localstack:4566
-  - DB env: DB_HOST=php-lambda-api-db, DB_PORT=5432, DB_NAME=aurora_postgresql_db, DB_SECRET_ARN=local/db/master
+  - DB env: DB_HOST=php-lambda-api-db, DB_PORT=5432, DB_NAME=aurora_postgresql_db, DB_USER=app_user, DB_PASSWORD=app_pass
   - TLS locally: DB_SSLMODE=disable (keep require in prod)
 - db: postgres:17.4 (user: app_user, pass: app_pass, db: aurora_postgresql_db)
-- localstack: localstack/localstack:stable (service enabled: secretsmanager)
-  - Init script: infra/local/localstack/create-secret.sh → creates secret local/db/master
 
 Xdebug (enabled)
 - The dev image ships with Xdebug enabled. Extra tweaks live in app/php/conf.d/xdebug.ini
@@ -198,18 +194,9 @@ Local workflow
 2) Edit code under ./app — changes are hot‑reloaded (no rebuild needed)
 3) Hit http://localhost:8000 (make ping / make curl)
 4) Watch logs: make app-logs
-5) Inspect DB: make db-cli; Inspect secret: make secret-get
+5) Inspect DB: make db-cli
 
 Troubleshooting (local)
-- LocalStack init script “Permission denied”
-  - chmod +x infra/local/localstack/create-secret.sh
-  - make restart
-- Check LocalStack health
-  - curl -s http://localhost:4566/_localstack/health | jq .
-  - Expect secretsmanager to be "running" and version shown
-- Secret not found / AWS errors
-  - Ensure AWS_SM_ENDPOINT points to LocalStack (compose sets it)
-  - make secret-get should print the JSON with username/password
 - DB SSL / connection errors
   - Locally sslmode=disable is used; ensure the db container is healthy (docker compose ps)
 - Xdebug not hitting IDE
@@ -474,5 +461,5 @@ This project deploys a PHP API on AWS Lambda behind API Gateway using Terraform.
 
 ## Security and networking notes
 
-- **Database security & networking**: see the **Database** section above for TLS, Secrets Manager, and VPC endpoint details.
+- **Database security & networking**: see the **Database** section above for TLS, environment variable credentials, and private subnet design.
 - **Logging**: CloudWatch receives both Lambda logs and structured API Gateway access logs for easy tracing.

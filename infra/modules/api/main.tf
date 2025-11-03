@@ -105,9 +105,6 @@ resource "aws_lambda_function" "this" {
         DB_PORT = tostring(var.db_port)
         DB_NAME = var.db_name
       } : {},
-      var.enable_db_secret_access && var.db_secret_arn != "" ? {
-        DB_SECRET_ARN = var.db_secret_arn
-      } : {},
       var.env_vars
     )
   }
@@ -245,46 +242,6 @@ resource "aws_lambda_provisioned_concurrency_config" "this" {
   qualifier                         = aws_lambda_function.this.version
   provisioned_concurrent_executions = var.provisioned_concurrency
 }
-
-
-
-# Inline permission for Lambda to read Secrets Manager values (scoped to this account/region)
-resource "aws_iam_role_policy" "db_secret" {
-  name = "${local.name_prefix}-secrets-get"
-  role = aws_iam_role.lambda_exec.name
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = ["secretsmanager:GetSecretValue"],
-        Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "ssm_read" {
-  count = length(var.ssm_parameter_arns) > 0 ? 1 : 0
-  name  = "${local.name_prefix}-ssm-get"
-  role  = aws_iam_role.lambda_exec.name
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "ssm:GetParameter",
-          "ssm:GetParameters"
-        ],
-        Resource = var.ssm_parameter_arns
-      }
-    ]
-  })
-}
-
 
 # Output the Lambda security group ID (when VPC is enabled)
 output "lambda_security_group_id" {

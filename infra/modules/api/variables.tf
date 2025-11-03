@@ -121,28 +121,9 @@ variable "db_name" {
   description = "Logical database name for PDO connections"
 }
 
-# Allow Lambda to read a secret (username/password) from Secrets Manager
-variable "enable_db_secret_access" {
-  type        = bool
-  default     = false
-  description = "When true, attach IAM permissions to read the provided db_secret_arn and expose it as an env var."
-}
-
-variable "db_secret_arn" {
-  type        = string
-  default     = ""
-  description = "Secrets Manager secret ARN containing DB credentials (e.g., the RDS-managed master secret)"
-}
-
 # Additional environment variables to inject into the Lambda function
 variable "env_vars" {
   type        = map(string)
   default     = {}
   description = "Additional environment variables passed to the Lambda function (string values only)."
-}
-
-variable "ssm_parameter_arns" {
-  type        = list(string)
-  default     = []
-  description = "List of SSM Parameter Store ARNs the Lambda function may read."
 }

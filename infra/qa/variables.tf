@@ -39,4 +39,14 @@ variable "aurora_engine_version" {
   description = "Aurora PostgreSQL engine version to use (e.g. 17.4 or later supported in region)"
 }
 
+variable "db_username" {
+  type        = string
+  description = "Database master username passed to the Lambda environment."
+}
+
+variable "db_password" {
+  type        = string
+  sensitive   = true
+  description = "Database master password passed to the Lambda environment."
+}
 
