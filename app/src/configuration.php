@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+use Aws\Exception\AwsException;
+use Aws\Ssm\SsmClient;
 use Dotenv\Dotenv;
 use League\Config\Configuration;
 use League\Config\ConfigurationInterface;
@@ -32,11 +34,23 @@ return (function (): ConfigurationInterface {
         if (!empty($_ENV['AWS_SM_ENDPOINT'])) {
             $dotenv->required(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'])->notEmpty();
         }
+        if (isset($_ENV['AWS_SSM_HTTP_CONNECT_TIMEOUT'])) {
+            $dotenv->required('AWS_SSM_HTTP_CONNECT_TIMEOUT')->isInteger();
+        }
+        if (isset($_ENV['AWS_SSM_HTTP_TIMEOUT'])) {
+            $dotenv->required('AWS_SSM_HTTP_TIMEOUT')->isInteger();
+        }
+        if (!empty($_ENV['AWS_SSM_ENDPOINT'])) {
+            $dotenv->required(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'])->notEmpty();
+        }
     } catch (Throwable $exception) {
         if (!str_contains($exception->getMessage(), '.env')) {
             throw $exception;
         }
     }
+
+    $ssmConnectTimeout = (float)($_ENV['AWS_SSM_HTTP_CONNECT_TIMEOUT'] ?? $_ENV['AWS_SM_HTTP_CONNECT_TIMEOUT']);
+    $ssmTimeout = (float)($_ENV['AWS_SSM_HTTP_TIMEOUT'] ?? $_ENV['AWS_SM_HTTP_TIMEOUT']);
 
     // Define configuration schema with validation rules
     $schema = [
@@ -60,6 +74,19 @@ return (function (): ConfigurationInterface {
                 // Ready-to-use client configuration array for Aws\SecretsManager\SecretsManagerClient
                 'clientConfig' => Expect::arrayOf(Expect::mixed()),
             ])->castTo('array'),
+            'parameterStore' => Expect::structure([
+                'version' => Expect::string()->min(1),
+                'endpoint' => Expect::string()->nullable(),
+                'http' => Expect::structure([
+                    'connect_timeout' => Expect::float(),
+                    'timeout' => Expect::float(),
+                ])->castTo('array'),
+                'credentials' => Expect::structure([
+                    'key' => Expect::string()->nullable(),
+                    'secret' => Expect::string()->nullable(),
+                ])->castTo('array'),
+                'clientConfig' => Expect::arrayOf(Expect::mixed()),
+            ])->castTo('array'),
         ])->castTo('array'),
 
         'db' => Expect::structure([
@@ -78,6 +105,10 @@ return (function (): ConfigurationInterface {
             'level' => Expect::anyOf('debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency'),
             'timezone' => Expect::string()->min(1),
         ])->castTo('array'),
+
+        'parameterStore' => Expect::structure([
+            'EXAMPLE_PARAMETER' => Expect::string()->min(1),
+        ])->castTo('array'),
     ];
 
     $config = new Configuration($schema);
@@ -95,6 +126,18 @@ return (function (): ConfigurationInterface {
                 'http' => [
                     'connect_timeout' => (float)$_ENV['AWS_SM_HTTP_CONNECT_TIMEOUT'],
                     'timeout' => (float)$_ENV['AWS_SM_HTTP_TIMEOUT'],
+                ],
+                'credentials' => [
+                    'key' => $_ENV['AWS_ACCESS_KEY_ID'] ?? null,
+                    'secret' => $_ENV['AWS_SECRET_ACCESS_KEY'] ?? null,
+                ],
+            ],
+            'parameterStore' => [
+                'version' => '2014-11-06',
+                'endpoint' => $_ENV['AWS_SSM_ENDPOINT'] ?? null,
+                'http' => [
+                    'connect_timeout' => $ssmConnectTimeout,
+                    'timeout' => $ssmTimeout,
                 ],
                 'credentials' => [
                     'key' => $_ENV['AWS_ACCESS_KEY_ID'] ?? null,
@@ -143,6 +186,49 @@ return (function (): ConfigurationInterface {
         }
     }
 
+    // AWS Systems Manager Parameter Store clientConfig
+    $ssmClientConfig = [
+        'version' => (string)$config->get('aws.parameterStore.version'),
+        'region'  => (string)$config->get('aws.region'),
+        'http'    => [
+            'connect_timeout' => (float)$config->get('aws.parameterStore.http.connect_timeout'),
+            'timeout'         => (float)$config->get('aws.parameterStore.http.timeout'),
+        ],
+    ];
+    $ssmEndpoint = $config->get('aws.parameterStore.endpoint');
+    if ($ssmEndpoint !== null && $ssmEndpoint !== '') {
+        $ssmClientConfig['endpoint'] = (string)$ssmEndpoint;
+
+        $key = $config->get('aws.parameterStore.credentials.key');
+        $secret = $config->get('aws.parameterStore.credentials.secret');
+
+        if ($key !== null && $key !== '' && $secret !== null && $secret !== '') {
+            $ssmClientConfig['credentials'] = [
+                'key'    => (string)$key,
+                'secret' => (string)$secret,
+            ];
+        }
+    }
+
+    try {
+        $ssmClient = new SsmClient($ssmClientConfig);
+        $exampleParameterResult = $ssmClient->getParameter([
+            'Name'           => 'EXAMPLE_PARAMETER',
+            'WithDecryption' => true,
+        ]);
+    } catch (AwsException $exception) {
+        throw new RuntimeException(
+            sprintf('Failed to read parameter "%s" from Parameter Store: %s', 'EXAMPLE_PARAMETER', $exception->getMessage()),
+            (int)$exception->getCode(),
+            $exception,
+        );
+    }
+
+    $exampleParameterValue = $exampleParameterResult['Parameter']['Value'] ?? null;
+    if (!is_string($exampleParameterValue) || $exampleParameterValue === '') {
+        throw new RuntimeException('Parameter "EXAMPLE_PARAMETER" is missing or empty.');
+    }
+
     // Database DSN
     $dbHost = (string)$config->get('db.host');
     $dbPort = (int) $config->get('db.port');
@@ -163,9 +249,15 @@ return (function (): ConfigurationInterface {
             'secretsManager' => [
                 'clientConfig' => $smClientConfig,
             ],
+            'parameterStore' => [
+                'clientConfig' => $ssmClientConfig,
+            ],
         ],
         'db' => [
             'dsn' => $dsn,
+        ],
+        'parameterStore' => [
+            'EXAMPLE_PARAMETER' => $exampleParameterValue,
         ],
     ]);
 
@@ -174,6 +266,7 @@ return (function (): ConfigurationInterface {
     $config->get('aws');
     $config->get('db');
     $config->get('logger');
+    $config->get('parameterStore');
 
     return $config;
 })();

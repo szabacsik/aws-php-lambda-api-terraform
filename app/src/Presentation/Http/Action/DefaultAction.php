@@ -37,6 +37,10 @@ final readonly class DefaultAction
             'path'   => $request->getUri()->getPath(),
         ];
 
+        $parameters = [
+            'EXAMPLE_PARAMETER' => (string)$this->config->get('parameterStore.EXAMPLE_PARAMETER'),
+        ];
+
         try {
             // 1) Secrets Manager - all configuration prepared by Configuration
             $secretArn = (string)$this->config->get('db.credentials.secretArn');
@@ -55,7 +59,12 @@ final readonly class DefaultAction
             $pass = $payload['password'] ?? null;
 
             if (!$user || !$pass) {
-                return ['ok' => false, 'error' => 'Secret is missing "username" or "password".', 'meta' => $meta];
+                return [
+                    'ok' => false,
+                    'error' => 'Secret is missing "username" or "password".',
+                    'meta' => $meta,
+                    'parameters' => $parameters,
+                ];
             }
 
             // 2) PDO - DSN assembled by Configuration
@@ -77,16 +86,33 @@ final readonly class DefaultAction
                     'server_version' => $serverVersion,
                 ],
                 'meta' => $meta,
+                'parameters' => $parameters,
             ];
         } catch (AwsException $e) {
             $this->logger->error('Secrets Manager error', ['code' => $e->getAwsErrorCode(), 'msg' => $e->getMessage()]);
-            return ['ok' => false, 'error' => 'Secret retrieval failed', 'meta' => $meta];
+            return [
+                'ok' => false,
+                'error' => 'Secret retrieval failed',
+                'meta' => $meta,
+                'parameters' => $parameters,
+            ];
         } catch (\PDOException $e) {
             $this->logger->error('DB error', ['code' => $e->getCode(), 'msg' => $e->getMessage()]);
-            return ['ok' => false, 'error' => 'DB connection/query failed', 'meta' => $meta];
+            return [
+                'ok' => false,
+                'error' => 'DB connection/query failed',
+                'meta' => $meta,
+                'parameters' => $parameters,
+            ];
         } catch (\Throwable $e) {
             $this->logger->error('Unhandled error', ['msg' => $e->getMessage()]);
-            return ['ok' => false, 'error' => 'Unhandled error', 'meta' => $meta, 'e' => (string)$e];
+            return [
+                'ok' => false,
+                'error' => 'Unhandled error',
+                'meta' => $meta,
+                'parameters' => $parameters,
+                'e' => (string)$e,
+            ];
         }
     }
 }
